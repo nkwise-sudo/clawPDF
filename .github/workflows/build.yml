@@ -44,7 +44,7 @@ jobs:
           /p:SignAssembly=false
           /m
           /v:minimal
-          /flp:logfile=build.log;verbosity=detailed
+          /flp:"logfile=build.log;verbosity=detailed"
 
       - name: Upload build log on failure
         if: failure()
