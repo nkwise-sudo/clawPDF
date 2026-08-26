@@ -1,0 +1,54 @@
+name: Build
+
+on:
+  push:
+    branches: [ master, dev ]
+  pull_request:
+    branches: [ master, dev ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    env:
+      Solution_Configuration: Debug
+      Solution_Platform: Any CPU
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: nuget/setup-nuget@v2
+
+      - name: Restore NuGet packages (packages.config)
+        run: nuget restore clawPDF.sln
+
+      - name: Restore NuGet packages (PackageReference)
+        run: msbuild clawPDF.sln /t:Restore /p:Configuration=${{ env.Solution_Configuration }} /p:Platform="${{ env.Solution_Platform }}"
+
+      - name: Build solution
+        # /p:SignAssembly=false — override de linha de comando, sem tocar nos .csproj commitados.
+        #   Decisão Fase 2: strong-name signing (signClawPDF.pfx) não versionado e não necessário
+        #   pra build-only. Reabrir quando existir artefato/release real (Fase 4-5).
+        # Solution "Debug|Any CPU" já exclui clawPDF_setup.vdproj do build (confirmado no .sln —
+        #   só tem .Build.0 pra ARM64, não pra Any CPU). Não precisa unload manual nem extensão
+        #   Visual Studio Installer Projects no runner.
+        run: >
+          msbuild clawPDF.sln
+          /p:Configuration=${{ env.Solution_Configuration }}
+          /p:Platform="${{ env.Solution_Platform }}"
+          /p:SignAssembly=false
+          /m
+          /v:minimal
+          /flp:logfile=build.log;verbosity=detailed
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
