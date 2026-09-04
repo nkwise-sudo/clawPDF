@@ -52,3 +52,88 @@ jobs:
         with:
           name: build-log
           path: build.log
+
+      # ---------------------------------------------------------------------
+      # Fase 3 do roteiro CLAWPDF — smoke test
+      # Decisão de escopo e critério: Handoff_SunTzu.md v1.3 (31/08/2026)
+      #
+      # clawPDF não tem suíte de testes própria (confirmado: SystemWrapper.Tests não
+      # está no .sln principal). No startup (App.xaml.cs), o app checa o Spooler do
+      # Windows e se a impressora clawPDF está instalada; como o runner não tem a
+      # impressora instalada (isso só existe a partir da Fase 4/MSI), o fluxo de
+      # reparo (RepairPrinterAssistant) abre um diálogo modal (MessageWindow.ShowTopMost)
+      # perguntando se quer reinstalar os drivers — e trava esperando clique, porque
+      # não há ninguém pra clicar. Isso NÃO é um bug, é o comportamento esperado.
+      #
+      # Critério (decisão Sun Tzu — rejeitou tocar em App.xaml.cs, ficou 100% CI-side):
+      #   PASS: processo sai sozinho com exit code {0,1} dentro do timeout, OU
+      #         processo continua vivo sem evidência de crash após o timeout
+      #         (nesse caso, mata o processo e considera sucesso — "vivo e sem
+      #         crash" é o sinal esperado quando o modal de reparo está esperando).
+      #   FAIL: exit code fora de {0,1}, ou evidência de crash real (ex: "Unhandled
+      #         Exception", access violation) capturada no stdout/stderr antes do
+      #         processo morrer.
+      # ---------------------------------------------------------------------
+      - name: Smoke test — clawPDF.exe inicia sem crash
+        shell: pwsh
+        run: |
+          # OutputPath real pra Debug|AnyCPU é "..\_Build\Debug\" relativo ao
+          # csproj (clawPDF.csproj), não "bin\Debug\" (isso é só pra Debug|x86).
+          $exePath = "src\_Build\Debug\clawPDF.exe"
+
+          if (-not (Test-Path $exePath)) {
+            Write-Error "FAIL: clawPDF.exe não encontrado em $exePath — build não produziu o artefato esperado"
+            exit 1
+          }
+
+          $stdoutFile = "smoke_stdout.log"
+          $stderrFile = "smoke_stderr.log"
+          $timeoutSeconds = 15
+
+          Write-Host "Iniciando $exePath (timeout: ${timeoutSeconds}s)"
+
+          $process = Start-Process -FilePath $exePath `
+            -RedirectStandardOutput $stdoutFile `
+            -RedirectStandardError $stderrFile `
+            -PassThru
+
+          $exited = $process.WaitForExit($timeoutSeconds * 1000)
+
+          if ($exited) {
+            $exitCode = $process.ExitCode
+            Write-Host "Processo saiu sozinho com exit code $exitCode"
+
+            if ($exitCode -eq 0 -or $exitCode -eq 1) {
+              Write-Host "PASS: exit code $exitCode dentro do esperado {0,1}"
+            } else {
+              Write-Error "FAIL: exit code $exitCode fora do esperado {0,1} — possível crash real"
+              exit 1
+            }
+          } else {
+            Write-Host "Processo ainda rodando após ${timeoutSeconds}s — checando evidência de crash antes de matar"
+
+            $stdoutContent = Get-Content $stdoutFile -Raw -ErrorAction SilentlyContinue
+            $stderrContent = Get-Content $stderrFile -Raw -ErrorAction SilentlyContinue
+            $combined = "$stdoutContent`n$stderrContent"
+
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+
+            if ($combined -match "Unhandled Exception" -or $combined -match "[Aa]ccess violation") {
+              Write-Error "FAIL: evidência de crash real encontrada no output antes de matar o processo"
+              Write-Host "--- stdout ---`n$stdoutContent"
+              Write-Host "--- stderr ---`n$stderrContent"
+              exit 1
+            } else {
+              Write-Host "PASS: processo estava vivo sem evidência de crash — comportamento esperado (modal de reparo de impressora travando, sem impressora instalada no runner)"
+            }
+          }
+
+      - name: Upload smoke test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-logs
+          path: |
+            smoke_stdout.log
+            smoke_stderr.log
+          if-no-files-found: ignore
