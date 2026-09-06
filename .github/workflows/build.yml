@@ -137,3 +137,28 @@ jobs:
             smoke_stdout.log
             smoke_stderr.log
           if-no-files-found: ignore
+
+      # ---------------------------------------------------------------------
+      # Fase 4 do roteiro CLAWPDF — geração do instalador MSI
+      # Decisões de escopo: Handoff_SunTzu.md v1.5 (05/09/2026)
+      #
+      # clawPDF_setup.vdproj (Visual Studio Installer Projects) segue excluído
+      # do build principal (decisão da Fase 1) — não builda com MSBuild puro e
+      # a extensão VSIX não tem suporte confiável em runner headless. Migração
+      # pro WiX Toolset v5 (SDK-style .wixproj, restaurado via NuGet/dotnet,
+      # sem precisar instalar nada manualmente no runner).
+      #
+      # O MSI empacota a saída Debug|AnyCPU já validada (decisão #5) — não
+      # Release. Sem assinatura Authenticode (decisão #2, adiada pra Fase 5).
+      # ---------------------------------------------------------------------
+      - name: Build MSI (WiX)
+        run: >
+          dotnet build src\clawPDF_setup_wix\clawPDF_setup_wix.wixproj
+          -c Debug
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clawPDF-msi
+          path: src\clawPDF_setup_wix\bin\Debug\clawPDF_CI.msi
+          if-no-files-found: error

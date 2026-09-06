@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  clawPDF — instalador MSI gerado via WiX Toolset v5 (Fase 4 do roteiro CI/CD).
+
+  Decisões de arquitetura desta fase (ver Handoff_SunTzu.md v1.5 e
+  06_Fase4_Kickoff.md para o racional completo):
+    1. .vdproj migrado para WiX Toolset (extensão VSIX no runner rejeitada
+       por ser frágil em ambiente headless).
+    2. Sem assinatura Authenticode nesta fase — adiada pra Fase 5.
+    3. Publicação do MSI como artifact do run (actions/upload-artifact) é
+       o critério de sucesso desta fase.
+    4. Sem endurecimento do critério de smoke test nesta fase — Fase 5.
+    5. MSI empacota a saída Debug|AnyCPU já existente e validada (não
+       Release) — conhecido e aceito que o MSI carrega símbolos de debug.
+
+  Limitação conhecida (fora do escopo fechado da Fase 4, não bloqueante):
+  este instalador copia os arquivos da aplicação e cria um atalho, mas
+  não executa as ações de instalação de driver de impressora que o
+  clawPDF_setup.vdproj original fazia via SetupHelper.exe/clawmon. Isso é
+  necessário pra impressora "existir de verdade" no runner, item já
+  registrado como acompanhamento pra Fase 5 (endurecimento do smoke test).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <Package Name="clawPDF (CI Debug Build)"
+           Manufacturer="clawSoft"
+           Version="0.9.3.0"
+           UpgradeCode="2EB2882E-21C6-452A-A9FE-B7B08C925392"
+           Language="1033"
+           Codepage="1252">
+
+    <SummaryInformation
+      Description="clawPDF — artefato MSI gerado via CI/CD (Fase 4). Empacota build Debug|AnyCPU, sem assinatura Authenticode." />
+
+    <MajorUpgrade DowngradeErrorMessage="Uma versão mais recente do clawPDF (CI) já está instalada." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFilesFolder">
+      <Directory Id="INSTALLFOLDER" Name="clawPDF">
+        <Component Id="ApplicationShortcutComponent" Guid="678ADCDD-6E77-4869-B785-19A417F239AB">
+          <Shortcut Id="ApplicationStartMenuShortcut"
+                    Name="clawPDF"
+                    Directory="ProgramMenuFolder"
+                    Target="[INSTALLFOLDER]clawPDF.exe"
+                    WorkingDirectory="INSTALLFOLDER" />
+          <RemoveFolder Id="RemoveProgramMenuFolder" Directory="ProgramMenuFolder" On="uninstall" />
+          <RegistryValue Root="HKCU"
+                          Key="Software\clawSoft\clawPDF_CI"
+                          Name="installed"
+                          Type="integer"
+                          Value="1"
+                          KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <Feature Id="MainApplication" Title="clawPDF" Level="1">
+      <ComponentGroupRef Id="ApplicationFiles" />
+      <ComponentRef Id="ApplicationShortcutComponent" />
+    </Feature>
+
+    <!--
+      Harvesting recursivo (WiX v5 <Files Include>) em vez de listar cada
+      arquivo/componente à mão — o build output tem ~60 arquivos na raiz
+      mais subpastas (clawmon\Win32|x64|ARM64, docs\licenses, fonts,
+      languages, tessdata). Preserva a estrutura de subpastas relativa a
+      BuildOutputDir automaticamente.
+    -->
+    <ComponentGroup Id="ApplicationFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.BuildOutputDir)**" />
+    </ComponentGroup>
+
+  </Package>
+</Wix>

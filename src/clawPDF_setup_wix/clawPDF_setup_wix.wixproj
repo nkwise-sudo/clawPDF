@@ -1,0 +1,22 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+
+  <PropertyGroup>
+    <!-- Nome do artefato final: clawPDF_CI.msi -->
+    <OutputName>clawPDF_CI</OutputName>
+    <OutputType>Package</OutputType>
+
+    <!--
+      Fase 4 — decisão #5 (Handoff_SunTzu.md v1.5): o MSI empacota a saída
+      Debug|AnyCPU já existente e validada nas Fases 1-3, sem reabrir a
+      configuração de build. Empacotar Release fica pra Fase 5.
+      BuildOutputDir aponta pro mesmo caminho já usado pelo smoke test
+      da Fase 3 (src\_Build\Debug\).
+    -->
+    <DefineConstants>BuildOutputDir=$(MSBuildThisFileDirectory)..\_Build\Debug\</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Product.wxs" />
+  </ItemGroup>
+
+</Project>
