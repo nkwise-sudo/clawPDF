@@ -15,8 +15,13 @@
     <DefineConstants>BuildOutputDir=$(MSBuildThisFileDirectory)..\_Build\Debug\</DefineConstants>
   </PropertyGroup>
 
-  <ItemGroup>
-    <Compile Include="Product.wxs" />
-  </ItemGroup>
+  <!--
+    Sem <ItemGroup><Compile Include="Product.wxs" /></ItemGroup> aqui de propósito:
+    o WixToolset.Sdk já faz globbing implícito de todo *.wxs na pasta do projeto
+    (equivalente ao que o SDK do .NET faz com *.cs). Incluír explicitamente causava
+    compilação duplicada do Product.wxs -> duas seções de entrada (<Package>) ->
+    WIX0089/WIX0090 ("Multiple entry sections found"), descoberto no primeiro run
+    real do Actions (05/09/2026).
+  -->
 
 </Project>
