@@ -54,6 +54,35 @@ jobs:
           path: build.log
 
       # ---------------------------------------------------------------------
+      # Fase 5 do roteiro CLAWPDF — build Release|AnyCPU
+      # Decisão de escopo: Handoff_SunTzu.md v1.6 / 08_Fase5_Kickoff.md (06/09/2026)
+      #
+      # A Fase 4 empacotava a saída Debug|AnyCPU (decisão deliberada, pra não reabrir
+      # a config de build naquela fase). A Fase 5 reabre isso: o MSI de release passa
+      # a empacotar Release|AnyCPU (sem tocar no build Debug acima, que continua
+      # existindo só pro smoke test da Fase 3 — os dois builds coexistem no mesmo job).
+      # Mesma configuração do build Debug (SignAssembly=false continua válido aqui —
+      # é strong-name signing, decisão da Fase 2, não tem relação com o Authenticode
+      # do MSI tratado mais abaixo).
+      # ---------------------------------------------------------------------
+      - name: Build solution (Release)
+        run: >
+          msbuild clawPDF.sln
+          /p:Configuration=Release
+          /p:Platform="${{ env.Solution_Platform }}"
+          /p:SignAssembly=false
+          /m
+          /v:minimal
+          /flp:"logfile=build-release.log;verbosity=detailed"
+
+      - name: Upload Release build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-release-log
+          path: build-release.log
+
+      # ---------------------------------------------------------------------
       # Fase 3 do roteiro CLAWPDF — smoke test
       # Decisão de escopo e critério: Handoff_SunTzu.md v1.3 (31/08/2026)
       #
@@ -139,8 +168,9 @@ jobs:
           if-no-files-found: ignore
 
       # ---------------------------------------------------------------------
-      # Fase 4 do roteiro CLAWPDF — geração do instalador MSI
-      # Decisões de escopo: Handoff_SunTzu.md v1.5 (05/09/2026)
+      # Fase 4/5 do roteiro CLAWPDF — geração e assinatura do instalador MSI
+      # Decisões de escopo: Handoff_SunTzu.md v1.5 (Fase 4) e v1.6 / 08_Fase5_Kickoff.md
+      # (Fase 5, 06/09/2026)
       #
       # clawPDF_setup.vdproj (Visual Studio Installer Projects) segue excluído
       # do build principal (decisão da Fase 1) — não builda com MSBuild puro e
@@ -148,17 +178,71 @@ jobs:
       # pro WiX Toolset v5 (SDK-style .wixproj, restaurado via NuGet/dotnet,
       # sem precisar instalar nada manualmente no runner).
       #
-      # O MSI empacota a saída Debug|AnyCPU já validada (decisão #5) — não
-      # Release. Sem assinatura Authenticode (decisão #2, adiada pra Fase 5).
+      # A partir da Fase 5: o MSI empacota Release|AnyCPU (não mais Debug, decisão
+      # revisada) e é assinado com Authenticode self-signed gerado no próprio CI —
+      # decisão explícita de manter a fase dentro de infraestrutura de CI, sem
+      # custo/procurement de certificado real. Trade-off aceito: o MSI vai disparar
+      # avisos do Windows Defender/SmartScreen no destino (cadeia de confiança não
+      # reconhecida) — esperado, não é bug do pipeline.
       # ---------------------------------------------------------------------
       - name: Build MSI (WiX)
         run: >
           dotnet build src\clawPDF_setup_wix\clawPDF_setup_wix.wixproj
-          -c Debug
+          -c Release
+
+      - name: Gerar certificado self-signed para Authenticode
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate `
+            -Type CodeSigningCert `
+            -Subject "CN=clawPDF CI (self-signed, nao distribuido)" `
+            -CertStoreLocation Cert:\CurrentUser\My `
+            -KeyExportPolicy Exportable `
+            -KeyUsage DigitalSignature `
+            -NotAfter (Get-Date).AddYears(1)
+
+          Write-Host "Certificado gerado. Thumbprint: $($cert.Thumbprint)"
+          echo "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+
+      - name: Localizar signtool.exe
+        shell: pwsh
+        run: |
+          $signtool = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "signtool.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "\\x64\\" } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+
+          if (-not $signtool) {
+            Write-Error "signtool.exe nao encontrado em C:\Program Files (x86)\Windows Kits\10\bin no runner"
+            exit 1
+          }
+
+          Write-Host "signtool encontrado em: $signtool"
+          echo "SIGNTOOL_PATH=$signtool" >> $env:GITHUB_ENV
+
+      - name: Assinar MSI (Authenticode self-signed)
+        shell: pwsh
+        run: |
+          $msiPath = "src\clawPDF_setup_wix\bin\Release\clawPDF_CI.msi"
+
+          if (-not (Test-Path $msiPath)) {
+            Write-Error "FAIL: MSI nao encontrado em $msiPath"
+            exit 1
+          }
+
+          & "$env:SIGNTOOL_PATH" sign /fd sha256 /sha1 $env:CERT_THUMBPRINT /tr http://timestamp.digicert.com /td sha256 $msiPath
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "FAIL: signtool retornou exit code $LASTEXITCODE"
+            exit 1
+          }
+
+          Write-Host "Verificando assinatura (self-signed, cadeia nao confiavel e esperado)"
+          & "$env:SIGNTOOL_PATH" verify /pa $msiPath
 
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
         with:
           name: clawPDF-msi
-          path: src\clawPDF_setup_wix\bin\Debug\clawPDF_CI.msi
+          path: src\clawPDF_setup_wix\bin\Release\clawPDF_CI.msi
           if-no-files-found: error

@@ -6,13 +6,13 @@
     <OutputType>Package</OutputType>
 
     <!--
-      Fase 4 — decisão #5 (Handoff_SunTzu.md v1.5): o MSI empacota a saída
-      Debug|AnyCPU já existente e validada nas Fases 1-3, sem reabrir a
-      configuração de build. Empacotar Release fica pra Fase 5.
-      BuildOutputDir aponta pro mesmo caminho já usado pelo smoke test
-      da Fase 3 (src\_Build\Debug\).
+      Fase 5 — decisão (Handoff_SunTzu.md v1.6 / 08_Fase5_Kickoff.md): o MSI passa
+      a empacotar a saída Release|AnyCPU (não mais Debug, que era a decisão interina
+      da Fase 4). Reabre a config de build deliberadamente — momento certo, já que
+      é exatamente o escopo desta fase. Symbols de debug (.pdb) excluídos no
+      harvesting em Product.wxs, não aqui.
     -->
-    <DefineConstants>BuildOutputDir=$(MSBuildThisFileDirectory)..\_Build\Debug\</DefineConstants>
+    <DefineConstants>BuildOutputDir=$(MSBuildThisFileDirectory)..\_Build\Release\</DefineConstants>
   </PropertyGroup>
 
   <!--

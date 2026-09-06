@@ -1,28 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  clawPDF — instalador MSI gerado via WiX Toolset v5 (Fase 4 do roteiro CI/CD).
+  clawPDF — instalador MSI gerado via WiX Toolset v5 (Fases 4 e 5 do roteiro CI/CD).
 
-  Decisões de arquitetura desta fase (ver Handoff_SunTzu.md v1.5 e
-  06_Fase4_Kickoff.md para o racional completo):
+  Decisões de arquitetura da Fase 4 (Handoff_SunTzu.md v1.5, 06_Fase4_Kickoff.md):
     1. .vdproj migrado para WiX Toolset (extensão VSIX no runner rejeitada
        por ser frágil em ambiente headless).
-    2. Sem assinatura Authenticode nesta fase — adiada pra Fase 5.
     3. Publicação do MSI como artifact do run (actions/upload-artifact) é
-       o critério de sucesso desta fase.
-    4. Sem endurecimento do critério de smoke test nesta fase — Fase 5.
-    5. MSI empacota a saída Debug|AnyCPU já existente e validada (não
-       Release) — conhecido e aceito que o MSI carrega símbolos de debug.
+       o critério de sucesso da Fase 4.
 
-  Limitação conhecida (fora do escopo fechado da Fase 4, não bloqueante):
-  este instalador copia os arquivos da aplicação e cria um atalho, mas
+  Decisões de arquitetura da Fase 5 (Handoff_SunTzu.md v1.6, 08_Fase5_Kickoff.md,
+  06/09/2026) — parte liberada, sem esperar as duas pendências (trigger de release
+  e endurecimento do smoke test):
+    - MSI agora empacota Release|AnyCPU (não mais Debug, decisão interina da Fase 4)
+    - Símbolos de debug (.pdb) excluídos do harvesting abaixo
+    - Assinatura Authenticode self-signed aplicada no workflow (build.yml), depois
+      do dotnet build deste projeto — não faz parte deste .wxs
+
+  Limitação conhecida (ainda não resolvida, bloqueia o endurecimento do smoke test
+  na Fase 5): este instalador copia os arquivos da aplicação e cria um atalho, mas
   não executa as ações de instalação de driver de impressora que o
-  clawPDF_setup.vdproj original fazia via SetupHelper.exe/clawmon. Isso é
-  necessário pra impressora "existir de verdade" no runner, item já
-  registrado como acompanhamento pra Fase 5 (endurecimento do smoke test).
+  clawPDF_setup.vdproj original fazia via SetupHelper.exe/clawmon. Registrado em
+  07_Fase4_Execucao.md e 08_Fase5_Kickoff.md (pergunta 4, em aberto).
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
 
-  <Package Name="clawPDF (CI Debug Build)"
+  <Package Name="clawPDF (CI Release Build, self-signed)"
            Manufacturer="clawSoft"
            Version="0.9.3.0"
            UpgradeCode="2EB2882E-21C6-452A-A9FE-B7B08C925392"
@@ -30,7 +32,7 @@
            Codepage="1252">
 
     <SummaryInformation
-      Description="clawPDF — artefato MSI gerado via CI/CD (Fase 4). Empacota build Debug|AnyCPU, sem assinatura Authenticode." />
+      Description="clawPDF — artefato MSI gerado via CI/CD. Empacota build Release|AnyCPU, assinado com Authenticode self-signed (nao distribuido a terceiros)." />
 
     <MajorUpgrade DowngradeErrorMessage="Uma versão mais recente do clawPDF (CI) já está instalada." />
 
@@ -68,9 +70,17 @@
       mais subpastas (clawmon\Win32|x64|ARM64, docs\licenses, fonts,
       languages, tessdata). Preserva a estrutura de subpastas relativa a
       BuildOutputDir automaticamente.
+
+      Exclude de *.pdb em qualquer profundidade — decisão Fase 5: MSI de release
+      não carrega símbolos de debug (ao contrário do MSI da Fase 4, que carregava
+      deliberadamente por empacotar Debug). DebugType da config Release é
+      "pdbonly" no .csproj, ou seja, os .pdb SÃO gerados ao lado dos binários;
+      o exclude aqui é o que garante que não entrem no MSI final.
     -->
     <ComponentGroup Id="ApplicationFiles" Directory="INSTALLFOLDER">
-      <Files Include="$(var.BuildOutputDir)**" />
+      <Files Include="$(var.BuildOutputDir)**">
+        <Exclude Files="$(var.BuildOutputDir)**\*.pdb" />
+      </Files>
     </ComponentGroup>
 
   </Package>
