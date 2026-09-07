@@ -255,6 +255,23 @@ jobs:
         run: |
           $exePath = "C:\Program Files\clawPDF\clawPDF.exe"
 
+          # --- Diagnóstico (não altera o critério, só gera evidência) ---
+          # Achado do run real (07/09/2026): "processo vivo após timeout" ficou
+          # ambíguo — pode ser a janela principal WPF (driver instalado, app normal)
+          # ou o modal de reparo (driver NÃO instalado). O app nunca sai sozinho
+          # sem argumentos (ver App.xaml.cs: appStart.Run() + WaitForThreadsAndShutdown).
+          # Checar diretamente se a impressora/driver existem no Windows dá evidência
+          # independente do comportamento da GUI, pra fundamentar a revisão do
+          # critério com o Sun Tzu.
+          Write-Host "=== Diagnostico: impressoras e drivers clawPDF instalados no runner ==="
+          $printers = Get-Printer -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*clawPDF*" }
+          if ($printers) { $printers | ForEach-Object { Write-Host "  Impressora: $($_.Name) | Driver: $($_.DriverName) | Port: $($_.PortName)" } }
+          else { Write-Host "  (nenhuma impressora com 'clawPDF' no nome)" }
+          $drivers = Get-PrinterDriver -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*clawPDF*" -or $_.Name -like "*ghostpdf*" }
+          if ($drivers) { $drivers | ForEach-Object { Write-Host "  Driver: $($_.Name)" } }
+          else { Write-Host "  (nenhum driver com 'clawPDF'/'ghostpdf' no nome)" }
+          Write-Host "=== Fim do diagnostico ==="
+
           if (-not (Test-Path $exePath)) {
             Write-Host "clawPDF.exe nao esta em $exePath. Procurando onde a instalacao colocou de fato (diagnostico):"
             foreach ($root in @("C:\Program Files", "C:\Program Files (x86)")) {
