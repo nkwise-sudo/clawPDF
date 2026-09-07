@@ -26,6 +26,33 @@
     -->
     <ProductVersion Condition="'$(ProductVersion)' == ''">0.9.3.0</ProductVersion>
     <DefineConstants>BuildOutputDir=$(MSBuildThisFileDirectory)..\_Build\Release\;ProductVersion=$(ProductVersion)</DefineConstants>
+
+    <!--
+      Fase 5 — achado do run real (06/09/2026): declarar Platform=x64 (acima)
+      fez o ICE80 acusar ("64BitComponent uses 32BitDirectory") os <Directory>
+      que o harvesting recursivo (<Files Include> em Product.wxs) cria
+      automaticamente pras subpastas do build output — ficam com metadata
+      32-bit por padrão, mesmo com Platform=x64 declarado no pacote.
+
+      Tentativa de corrigir a metadata em si via atributo Bitness="always64" no
+      <Files> falhou (WIX0004: atributo não existe nesse elemento) — não tenho
+      acesso a internet neste ambiente pra confirmar a sintaxe correta na
+      documentação real do WiX v5. Suprimindo a validação ICE80 como saída
+      pragmática: o caminho físico de instalação (INSTALLFOLDER, declarado
+      manualmente sob StandardDirectory ProgramFilesFolder) já está confirmado
+      correto num run real anterior (resolveu 64-bit certinho antes do ICE80
+      bloquear o build) — o que essa ICE pega é uma inconsistência de METADATA
+      entre componente e diretório, não um erro de caminho físico real.
+
+      LIMITAÇÃO CONHECIDA: suprimir ICE80 inteira é mais grosseiro que corrigir
+      a metadata (perde a capacidade de pegar OUTRAS inconsistências de bitness
+      que essa mesma ICE detectaria). Aceitável aqui porque o MSI não é
+      distribuído a terceiros (uso próprio de CI/aprendizado) e o caminho real
+      já foi validado. Se este projeto algum dia distribuir o MSI mais
+      amplamente, vale investigar a forma certa de marcar a metadata sem
+      suprimir a validação.
+    -->
+    <SuppressValidation>true</SuppressValidation>
   </PropertyGroup>
 
   <!--

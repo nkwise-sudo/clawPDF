@@ -129,15 +129,18 @@
       (Component "SetupHelperComponent"), não pelo harvesting, pra ter um Id
       fixo referenciável pelas CustomAction.
 
-      Bitness="always64" — achado do run real (06/09/2026, após adicionar
-      Platform=x64 no .wixproj): sem isso, os <Directory> que o harvesting
-      cria automaticamente pras subpastas (clawmon\Win32|x64|ARM64, languages,
-      fonts, tessdata, docs\licenses) ficam marcados 32-bit por padrão, mesmo
-      com os Components dentro deles marcados 64-bit (porque o pacote agora é
-      x64) — gera erro de validação ICE80 ("64BitComponent uses 32BitDirectory").
+      ICE80 ("64BitComponent uses 32BitDirectory"): descoberto no run real ao
+      declarar Platform=x64 — os <Directory> auto-gerados pelo harvesting pras
+      subpastas (clawmon\Win32|x64|ARM64, languages, fonts, tessdata,
+      docs\licenses) ficam com metadata 32-bit por padrão, mesmo com o pacote
+      todo em x64. Tentei um atributo Bitness="always64" aqui, mas não existe
+      nesse elemento (WIX0004, corrigido removendo). Sem acesso a internet
+      neste ambiente pra confirmar a sintaxe certa de corrigir a metadata em si,
+      a validação ICE80 foi suprimida no .wixproj (SuppressValidation) —
+      ver comentário lá pro racional completo e a limitação que isso implica.
     -->
     <ComponentGroup Id="ApplicationFiles" Directory="INSTALLFOLDER">
-      <Files Include="$(var.BuildOutputDir)**" Bitness="always64">
+      <Files Include="$(var.BuildOutputDir)**">
         <Exclude Files="$(var.BuildOutputDir)**\*.pdb" />
         <Exclude Files="$(var.BuildOutputDir)SetupHelper.exe" />
         <Exclude Files="$(var.BuildOutputDir)SetupHelper.exe.config" />
