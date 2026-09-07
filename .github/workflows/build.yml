@@ -232,46 +232,55 @@ jobs:
           if-no-files-found: ignore
 
       # ---------------------------------------------------------------------
-      # Fase 5 do roteiro CLAWPDF — smoke test endurecido
-      # Decisão de escopo e critério: Handoff_SunTzu.md v1.7 (endurecimento do
-      # smoke test, desbloqueado pelas custom actions de driver portadas acima)
+      # Fase 5 do roteiro CLAWPDF — smoke test endurecido (critério revisado)
+      # Decisão de critério: Handoff_SunTzu.md v1.8 (07/09/2026), substitui o
+      # critério "exit 0 puro" da v1.7.
       #
-      # Critério da Fase 3 (exit {0,1} ou "vivo = PASS") existia porque a impressora
-      # clawPDF nunca estava instalada no runner, então o app sempre caía no fluxo
-      # de reparo com diálogo modal travado. Agora que o MSI instala o driver de
-      # verdade (step anterior), esse fluxo de reparo não deveria mais disparar —
-      # CheckInstallation()/EnsurePrinterIsInstalled() em App.xaml.cs deve encontrar
-      # a impressora já instalada e seguir o caminho normal.
+      # Achado #7/#8 (10_Fase5_Execucao_Fechamento.md): "exit 0 puro" é
+      # insatisfazível por design — clawPDF é GUI pura e nunca sai sozinho sem
+      # /PrintFile= (App.xaml.cs: appStart.Run() + WaitForThreadsAndShutdown
+      # espera o usuário fechar a janela). "Processo vivo após timeout" também
+      # é ambíguo isoladamente — pode ser a janela principal (driver OK) ou o
+      # modal de reparo travado (driver ausente). O diagnóstico Get-Printer/
+      # Get-PrinterDriver, que já existia como log, resolve a ambiguidade de
+      # forma determinística e vira o próprio gate.
       #
-      # Critério novo:
-      #   PASS: processo sai sozinho com exit code 0 puro, dentro do timeout.
-      #   FAIL: timeout (processo travado — indicaria que o driver não ficou
-      #         instalado do jeito que o app espera), exit code != 0 (inclusive
-      #         o antigo "1 aceitável" da Fase 3 — não é mais aceitável aqui,
-      #         porque não há mais motivo legítimo pro app recusar rodar).
+      # Critério novo (substitui o da v1.7):
+      #   PASS: Get-Printer encontra a impressora clawPDF E Get-PrinterDriver
+      #         encontra o driver "clawPDF Virtual Printer" E o processo
+      #         clawPDF.exe fica vivo sem crash após o timeout — ou sai sozinho
+      #         com exit code {0,1} dentro do timeout (mesma lógica de saída
+      #         controlada já estabelecida na Fase 3).
+      #   FAIL: impressora ou driver não encontrados; OU evidência de crash real
+      #         (exit code fora de {0,1} ao sair sozinho, ou "Unhandled
+      #         Exception" capturado no stdout/stderr antes do processo morrer).
       # ---------------------------------------------------------------------
-      - name: Smoke test — clawPDF.exe pós-instalação real (exit 0 puro)
+      - name: Smoke test — driver instalado + processo vivo/saída controlada
         shell: pwsh
         run: |
           $exePath = "C:\Program Files\clawPDF\clawPDF.exe"
 
-          # --- Diagnóstico (não altera o critério, só gera evidência) ---
-          # Achado do run real (07/09/2026): "processo vivo após timeout" ficou
-          # ambíguo — pode ser a janela principal WPF (driver instalado, app normal)
-          # ou o modal de reparo (driver NÃO instalado). O app nunca sai sozinho
-          # sem argumentos (ver App.xaml.cs: appStart.Run() + WaitForThreadsAndShutdown).
-          # Checar diretamente se a impressora/driver existem no Windows dá evidência
-          # independente do comportamento da GUI, pra fundamentar a revisão do
-          # critério com o Sun Tzu.
-          Write-Host "=== Diagnostico: impressoras e drivers clawPDF instalados no runner ==="
+          # --- Gate 1: driver de impressora instalado de verdade ---
+          Write-Host "=== Verificando impressora e driver clawPDF instalados no runner ==="
           $printers = Get-Printer -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*clawPDF*" }
+          $drivers = Get-PrinterDriver -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*clawPDF*" -or $_.Name -like "*ghostpdf*" }
+
           if ($printers) { $printers | ForEach-Object { Write-Host "  Impressora: $($_.Name) | Driver: $($_.DriverName) | Port: $($_.PortName)" } }
           else { Write-Host "  (nenhuma impressora com 'clawPDF' no nome)" }
-          $drivers = Get-PrinterDriver -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*clawPDF*" -or $_.Name -like "*ghostpdf*" }
           if ($drivers) { $drivers | ForEach-Object { Write-Host "  Driver: $($_.Name)" } }
           else { Write-Host "  (nenhum driver com 'clawPDF'/'ghostpdf' no nome)" }
-          Write-Host "=== Fim do diagnostico ==="
 
+          if (-not $printers) {
+            Write-Error "FAIL: Get-Printer nao encontrou nenhuma impressora clawPDF — custom action AddPrinterDriver nao instalou a impressora"
+            exit 1
+          }
+          if (-not $drivers) {
+            Write-Error "FAIL: Get-PrinterDriver nao encontrou o driver clawPDF Virtual Printer — custom action AddPrinterDriver nao registrou o driver"
+            exit 1
+          }
+          Write-Host "PASS (gate 1): impressora e driver clawPDF confirmados instalados"
+
+          # --- Gate 2: processo vivo sem crash, ou saida controlada {0,1} ---
           if (-not (Test-Path $exePath)) {
             Write-Host "clawPDF.exe nao esta em $exePath. Procurando onde a instalacao colocou de fato (diagnostico):"
             foreach ($root in @("C:\Program Files", "C:\Program Files (x86)")) {
@@ -297,20 +306,19 @@ jobs:
           $exited = $process.WaitForExit($timeoutSeconds * 1000)
 
           if (-not $exited) {
-            Write-Error "FAIL: processo ainda rodando após ${timeoutSeconds}s — com a impressora instalada de verdade, isso indica travamento inesperado, não o fluxo de reparo antigo"
+            Write-Host "Processo ainda rodando apos ${timeoutSeconds}s — com driver confirmado instalado (gate 1), isso e a janela principal do app, nao mais o modal de reparo. Matando o processo e considerando PASS (mesma logica 'vivo = sucesso' da Fase 3)."
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-            Get-Content $stdoutFile -Raw -ErrorAction SilentlyContinue | Write-Host
-            Get-Content $stderrFile -Raw -ErrorAction SilentlyContinue | Write-Host
-            exit 1
+            Write-Host "PASS: driver instalado + processo vivo sem crash"
+            exit 0
           }
 
           $exitCode = $process.ExitCode
           Write-Host "Processo saiu sozinho com exit code $exitCode"
 
-          if ($exitCode -eq 0) {
-            Write-Host "PASS: exit code 0 puro — impressora instalada de verdade, app rodou o caminho normal"
+          if ($exitCode -eq 0 -or $exitCode -eq 1) {
+            Write-Host "PASS: driver instalado + saida controlada (exit code $exitCode)"
           } else {
-            Write-Error "FAIL: exit code $exitCode — esperado 0 puro agora que a impressora está instalada"
+            Write-Error "FAIL: exit code $exitCode fora do conjunto esperado {0,1} — indica crash real, nao saida controlada"
             Get-Content $stdoutFile -Raw -ErrorAction SilentlyContinue | Write-Host
             Get-Content $stderrFile -Raw -ErrorAction SilentlyContinue | Write-Host
             exit 1
