@@ -8,31 +8,36 @@
     3. Publicação do MSI como artifact do run (actions/upload-artifact) é
        o critério de sucesso da Fase 4.
 
-  Decisões de arquitetura da Fase 5 (Handoff_SunTzu.md v1.6, 08_Fase5_Kickoff.md,
-  06/09/2026) — parte liberada, sem esperar as duas pendências (trigger de release
-  e endurecimento do smoke test):
-    - MSI agora empacota Release|AnyCPU (não mais Debug, decisão interina da Fase 4)
-    - Símbolos de debug (.pdb) excluídos do harvesting abaixo
-    - Assinatura Authenticode self-signed aplicada no workflow (build.yml), depois
-      do dotnet build deste projeto — não faz parte deste .wxs
+  Decisões de arquitetura da Fase 5 (Handoff_SunTzu.md v1.7, 08_Fase5_Kickoff.md
+  v1.1, 06/09/2026) — escopo fechado por completo:
+    - MSI empacota Release|AnyCPU, sem símbolos de debug (.pdb excluídos)
+    - Assinatura Authenticode self-signed aplicada no workflow (build.yml)
+    - Version do pacote passada via $(var.ProductVersion), derivada da tag
+      semver empurrada (ex: v1.2.3 -> 1.2.3.0); fallback 0.9.3.0 fora de tag
+    - Custom actions de driver de impressora portadas do clawPDF_setup.vdproj
+      original (SetupHelper.exe /Driver=Add|Remove) via <CustomAction> abaixo —
+      ver Program.cs do SetupHelper: /Driver=Add chama Actions.InstallclawPDFPrinter()
+      com retry via IsRepairRequired(); /Driver=Remove chama UninstallclawPDFPrinter()
 
-  Limitação conhecida (ainda não resolvida, bloqueia o endurecimento do smoke test
-  na Fase 5): este instalador copia os arquivos da aplicação e cria um atalho, mas
-  não executa as ações de instalação de driver de impressora que o
-  clawPDF_setup.vdproj original fazia via SetupHelper.exe/clawmon. Registrado em
-  07_Fase4_Execucao.md e 08_Fase5_Kickoff.md (pergunta 4, em aberto).
+  Limitação conhecida e deliberada (fora do escopo da Fase 5): as custom actions
+  /ComInterface=Register|Unregister do instalador original (registro COM do
+  clawPDF.exe via RegAsm, pra automação externa) NÃO foram portadas — a decisão
+  do Sun Tzu falou especificamente em "driver de impressora", que é o que
+  desbloqueia o endurecimento do smoke test. Registro COM é uma funcionalidade
+  separada (automação de terceiros), não testada por nenhum smoke test existente.
+  Fica como item de backlog se algum dia for necessário.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
 
-  <Package Name="clawPDF (CI Release Build, self-signed)"
+  <Package Name="clawPDF"
            Manufacturer="clawSoft"
-           Version="0.9.3.0"
+           Version="$(var.ProductVersion)"
            UpgradeCode="2EB2882E-21C6-452A-A9FE-B7B08C925392"
            Language="1033"
            Codepage="1252">
 
     <SummaryInformation
-      Description="clawPDF — artefato MSI gerado via CI/CD. Empacota build Release|AnyCPU, assinado com Authenticode self-signed (nao distribuido a terceiros)." />
+      Description="clawPDF — instalador gerado via CI/CD, assinado com Authenticode self-signed (nao distribuido a terceiros, apenas para uso e aprendizado deste pipeline)." />
 
     <MajorUpgrade DowngradeErrorMessage="Uma versão mais recente do clawPDF (CI) já está instalada." />
 
@@ -54,14 +59,58 @@
                           Value="1"
                           KeyPath="yes" />
         </Component>
+
+        <!--
+          SetupHelper.exe extraído do harvesting recursivo (Exclude abaixo) e
+          declarado explicitamente aqui, com Id fixo ("SetupHelperExe"), porque
+          as CustomAction abaixo precisam de um FileRef estável — o harvesting
+          por wildcard gera Ids automáticos que não dá pra prever/referenciar.
+        -->
+        <Component Id="SetupHelperComponent" Guid="92D24513-C31B-4808-AA15-1887776CFC45">
+          <File Id="SetupHelperExe" Source="$(var.BuildOutputDir)SetupHelper.exe" KeyPath="yes" />
+          <File Id="SetupHelperExeConfig" Source="$(var.BuildOutputDir)SetupHelper.exe.config" />
+        </Component>
       </Directory>
     </StandardDirectory>
 
     <StandardDirectory Id="ProgramMenuFolder" />
 
+    <!--
+      Custom actions de instalação/remoção do driver de impressora, portadas do
+      clawPDF_setup.vdproj original (que invocava o mesmo SetupHelper.exe com os
+      mesmos argumentos como custom action tipo EXE). Execute="deferred" +
+      Impersonate="no" porque instalar um driver de impressora exige privilégio
+      de SYSTEM, não do usuário que disparou o msiexec (mesmo padrão do instalador
+      original).
+
+      AddDriver: Return="check" — se falhar, a instalação inteira falha. Faz
+      sentido: um MSI que "instalou" sem o driver não cumpriu o que promete.
+      RemoveDriver: Return="ignore" — remoção de driver é best-effort no
+      uninstall, não deve travar o processo de desinstalação se falhar.
+    -->
+    <CustomAction Id="AddPrinterDriver"
+                  FileRef="SetupHelperExe"
+                  ExeCommand="/Driver=Add"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check" />
+
+    <CustomAction Id="RemovePrinterDriver"
+                  FileRef="SetupHelperExe"
+                  ExeCommand="/Driver=Remove"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="AddPrinterDriver" After="InstallFiles">NOT Installed</Custom>
+      <Custom Action="RemovePrinterDriver" Before="RemoveFiles">Installed AND (REMOVE="ALL")</Custom>
+    </InstallExecuteSequence>
+
     <Feature Id="MainApplication" Title="clawPDF" Level="1">
       <ComponentGroupRef Id="ApplicationFiles" />
       <ComponentRef Id="ApplicationShortcutComponent" />
+      <ComponentRef Id="SetupHelperComponent" />
     </Feature>
 
     <!--
@@ -72,14 +121,19 @@
       BuildOutputDir automaticamente.
 
       Exclude de *.pdb em qualquer profundidade — decisão Fase 5: MSI de release
-      não carrega símbolos de debug (ao contrário do MSI da Fase 4, que carregava
-      deliberadamente por empacotar Debug). DebugType da config Release é
-      "pdbonly" no .csproj, ou seja, os .pdb SÃO gerados ao lado dos binários;
-      o exclude aqui é o que garante que não entrem no MSI final.
+      não carrega símbolos de debug. DebugType da config Release é "pdbonly" no
+      .csproj, ou seja, os .pdb SÃO gerados ao lado dos binários; o exclude aqui
+      é o que garante que não entrem no MSI final.
+
+      Exclude de SetupHelper.exe/.config — declarados explicitamente acima
+      (Component "SetupHelperComponent"), não pelo harvesting, pra ter um Id
+      fixo referenciável pelas CustomAction.
     -->
     <ComponentGroup Id="ApplicationFiles" Directory="INSTALLFOLDER">
       <Files Include="$(var.BuildOutputDir)**">
         <Exclude Files="$(var.BuildOutputDir)**\*.pdb" />
+        <Exclude Files="$(var.BuildOutputDir)SetupHelper.exe" />
+        <Exclude Files="$(var.BuildOutputDir)SetupHelper.exe.config" />
       </Files>
     </ComponentGroup>
 

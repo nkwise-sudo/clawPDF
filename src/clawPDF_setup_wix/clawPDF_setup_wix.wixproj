@@ -6,13 +6,17 @@
     <OutputType>Package</OutputType>
 
     <!--
-      Fase 5 — decisão (Handoff_SunTzu.md v1.6 / 08_Fase5_Kickoff.md): o MSI passa
-      a empacotar a saída Release|AnyCPU (não mais Debug, que era a decisão interina
-      da Fase 4). Reabre a config de build deliberadamente — momento certo, já que
-      é exatamente o escopo desta fase. Symbols de debug (.pdb) excluídos no
+      Fase 5 — decisão (Handoff_SunTzu.md v1.7 / 08_Fase5_Kickoff.md v1.1): o MSI
+      empacota a saída Release|AnyCPU. Symbols de debug (.pdb) excluídos no
       harvesting em Product.wxs, não aqui.
+
+      ProductVersion vem de fora via `dotnet build -p:ProductVersion=X.Y.Z.W`
+      (build.yml deriva isso da tag semver empurrada, ex: v1.2.3 -> 1.2.3.0).
+      Fallback 0.9.3.0 cobre builds sem tag (push normal em master/dev), onde
+      não existe uma versão de release pra derivar.
     -->
-    <DefineConstants>BuildOutputDir=$(MSBuildThisFileDirectory)..\_Build\Release\</DefineConstants>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">0.9.3.0</ProductVersion>
+    <DefineConstants>BuildOutputDir=$(MSBuildThisFileDirectory)..\_Build\Release\;ProductVersion=$(ProductVersion)</DefineConstants>
   </PropertyGroup>
 
   <!--

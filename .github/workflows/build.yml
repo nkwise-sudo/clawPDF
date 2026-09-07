@@ -3,15 +3,21 @@ name: Build
 on:
   push:
     branches: [ master, dev ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ master, dev ]
+
+# contents: write — necessário pro step "Criar GitHub Release" (Fase 5) criar a
+# release e anexar o MSI usando o GITHUB_TOKEN automático, sem secret adicional.
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: windows-latest
 
     env:
-      Solution_Configuration: Debug
+      Solution_Configuration: Release
       Solution_Platform: Any CPU
 
     steps:
@@ -30,13 +36,19 @@ jobs:
       - name: Restore NuGet packages (PackageReference)
         run: msbuild clawPDF.sln /t:Restore /p:Configuration=${{ env.Solution_Configuration }} /p:Platform="${{ env.Solution_Platform }}"
 
-      - name: Build solution
-        # /p:SignAssembly=false — override de linha de comando, sem tocar nos .csproj commitados.
-        #   Decisão Fase 2: strong-name signing (signClawPDF.pfx) não versionado e não necessário
-        #   pra build-only. Reabrir quando existir artefato/release real (Fase 4-5).
-        # Solution "Debug|Any CPU" já exclui clawPDF_setup.vdproj do build (confirmado no .sln —
-        #   só tem .Build.0 pra ARM64, não pra Any CPU). Não precisa unload manual nem extensão
-        #   Visual Studio Installer Projects no runner.
+      # ---------------------------------------------------------------------
+      # Fase 5 do roteiro CLAWPDF — build único em Release|AnyCPU
+      # Decisão de escopo: Handoff_SunTzu.md v1.6-1.7 / 08_Fase5_Kickoff.md (06/09/2026)
+      #
+      # Antes da Fase 5 este job buildava Debug (pro smoke test antigo) E Release
+      # (pro MSI) separadamente. Com o smoke test endurecido agora rodando contra
+      # o binário instalado de verdade pelo MSI (ver step "Smoke test" mais abaixo),
+      # o build Debug ficou redundante — foi retirado. Só existe Release agora,
+      # usado tanto pra montar o MSI quanto (via instalação) pro smoke test.
+      # /p:SignAssembly=false — override de linha de comando (decisão Fase 2),
+      # sem tocar nos .csproj commitados. Strong-name signing não necessário pra CI.
+      # ---------------------------------------------------------------------
+      - name: Build solution (Release)
         run: >
           msbuild clawPDF.sln
           /p:Configuration=${{ env.Solution_Configuration }}
@@ -54,123 +66,36 @@ jobs:
           path: build.log
 
       # ---------------------------------------------------------------------
-      # Fase 5 do roteiro CLAWPDF — build Release|AnyCPU
-      # Decisão de escopo: Handoff_SunTzu.md v1.6 / 08_Fase5_Kickoff.md (06/09/2026)
+      # Fase 5 — versão do MSI derivada da tag semver empurrada
+      # Decisão: Handoff_SunTzu.md v1.7 (trigger de release = push de tag vX.Y.Z)
       #
-      # A Fase 4 empacotava a saída Debug|AnyCPU (decisão deliberada, pra não reabrir
-      # a config de build naquela fase). A Fase 5 reabre isso: o MSI de release passa
-      # a empacotar Release|AnyCPU (sem tocar no build Debug acima, que continua
-      # existindo só pro smoke test da Fase 3 — os dois builds coexistem no mesmo job).
-      # Mesma configuração do build Debug (SignAssembly=false continua válido aqui —
-      # é strong-name signing, decisão da Fase 2, não tem relação com o Authenticode
-      # do MSI tratado mais abaixo).
+      # Fora de push de tag (push normal em master/dev, PR), usa o fallback
+      # 0.9.3.0 definido no .wixproj — não passa -p:ProductVersion nesse caso.
+      # Sem automação de bump de versão: a tag em si é a fonte da verdade,
+      # Eduardo cria e empurra manualmente (fora de escopo da Fase 5).
       # ---------------------------------------------------------------------
-      - name: Build solution (Release)
-        run: >
-          msbuild clawPDF.sln
-          /p:Configuration=Release
-          /p:Platform="${{ env.Solution_Platform }}"
-          /p:SignAssembly=false
-          /m
-          /v:minimal
-          /flp:"logfile=build-release.log;verbosity=detailed"
-
-      - name: Upload Release build log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-release-log
-          path: build-release.log
-
-      # ---------------------------------------------------------------------
-      # Fase 3 do roteiro CLAWPDF — smoke test
-      # Decisão de escopo e critério: Handoff_SunTzu.md v1.3 (31/08/2026)
-      #
-      # clawPDF não tem suíte de testes própria (confirmado: SystemWrapper.Tests não
-      # está no .sln principal). No startup (App.xaml.cs), o app checa o Spooler do
-      # Windows e se a impressora clawPDF está instalada; como o runner não tem a
-      # impressora instalada (isso só existe a partir da Fase 4/MSI), o fluxo de
-      # reparo (RepairPrinterAssistant) abre um diálogo modal (MessageWindow.ShowTopMost)
-      # perguntando se quer reinstalar os drivers — e trava esperando clique, porque
-      # não há ninguém pra clicar. Isso NÃO é um bug, é o comportamento esperado.
-      #
-      # Critério (decisão Sun Tzu — rejeitou tocar em App.xaml.cs, ficou 100% CI-side):
-      #   PASS: processo sai sozinho com exit code {0,1} dentro do timeout, OU
-      #         processo continua vivo sem evidência de crash após o timeout
-      #         (nesse caso, mata o processo e considera sucesso — "vivo e sem
-      #         crash" é o sinal esperado quando o modal de reparo está esperando).
-      #   FAIL: exit code fora de {0,1}, ou evidência de crash real (ex: "Unhandled
-      #         Exception", access violation) capturada no stdout/stderr antes do
-      #         processo morrer.
-      # ---------------------------------------------------------------------
-      - name: Smoke test — clawPDF.exe inicia sem crash
+      - name: Determinar versão do MSI a partir da tag
         shell: pwsh
         run: |
-          # OutputPath real pra Debug|AnyCPU é "..\_Build\Debug\" relativo ao
-          # csproj (clawPDF.csproj), não "bin\Debug\" (isso é só pra Debug|x86).
-          $exePath = "src\_Build\Debug\clawPDF.exe"
-
-          if (-not (Test-Path $exePath)) {
-            Write-Error "FAIL: clawPDF.exe não encontrado em $exePath — build não produziu o artefato esperado"
-            exit 1
-          }
-
-          $stdoutFile = "smoke_stdout.log"
-          $stderrFile = "smoke_stderr.log"
-          $timeoutSeconds = 15
-
-          Write-Host "Iniciando $exePath (timeout: ${timeoutSeconds}s)"
-
-          $process = Start-Process -FilePath $exePath `
-            -RedirectStandardOutput $stdoutFile `
-            -RedirectStandardError $stderrFile `
-            -PassThru
-
-          $exited = $process.WaitForExit($timeoutSeconds * 1000)
-
-          if ($exited) {
-            $exitCode = $process.ExitCode
-            Write-Host "Processo saiu sozinho com exit code $exitCode"
-
-            if ($exitCode -eq 0 -or $exitCode -eq 1) {
-              Write-Host "PASS: exit code $exitCode dentro do esperado {0,1}"
+          if ($env:GITHUB_REF -like "refs/tags/v*") {
+            $tag = $env:GITHUB_REF -replace "^refs/tags/v", ""
+            if ($tag -match "^\d+\.\d+\.\d+$") {
+              $msiVersion = "$tag.0"
+              Write-Host "Tag semver detectada: v$tag -> ProductVersion=$msiVersion"
+              echo "MSI_PRODUCT_VERSION_ARG=-p:ProductVersion=$msiVersion" >> $env:GITHUB_ENV
             } else {
-              Write-Error "FAIL: exit code $exitCode fora do esperado {0,1} — possível crash real"
-              exit 1
+              Write-Warning "Tag '$tag' nao bate com o padrao X.Y.Z esperado — usando fallback do .wixproj (0.9.3.0). Tags fora de X.Y.Z nao sao suportadas por este parsing simples."
+              echo "MSI_PRODUCT_VERSION_ARG=" >> $env:GITHUB_ENV
             }
           } else {
-            Write-Host "Processo ainda rodando após ${timeoutSeconds}s — checando evidência de crash antes de matar"
-
-            $stdoutContent = Get-Content $stdoutFile -Raw -ErrorAction SilentlyContinue
-            $stderrContent = Get-Content $stderrFile -Raw -ErrorAction SilentlyContinue
-            $combined = "$stdoutContent`n$stderrContent"
-
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-
-            if ($combined -match "Unhandled Exception" -or $combined -match "[Aa]ccess violation") {
-              Write-Error "FAIL: evidência de crash real encontrada no output antes de matar o processo"
-              Write-Host "--- stdout ---`n$stdoutContent"
-              Write-Host "--- stderr ---`n$stderrContent"
-              exit 1
-            } else {
-              Write-Host "PASS: processo estava vivo sem evidência de crash — comportamento esperado (modal de reparo de impressora travando, sem impressora instalada no runner)"
-            }
+            Write-Host "Push sem tag — usando fallback de versao do .wixproj (0.9.3.0)"
+            echo "MSI_PRODUCT_VERSION_ARG=" >> $env:GITHUB_ENV
           }
-
-      - name: Upload smoke test logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: smoke-test-logs
-          path: |
-            smoke_stdout.log
-            smoke_stderr.log
-          if-no-files-found: ignore
 
       # ---------------------------------------------------------------------
       # Fase 4/5 do roteiro CLAWPDF — geração e assinatura do instalador MSI
-      # Decisões de escopo: Handoff_SunTzu.md v1.5 (Fase 4) e v1.6 / 08_Fase5_Kickoff.md
-      # (Fase 5, 06/09/2026)
+      # Decisões de escopo: Handoff_SunTzu.md v1.5 (Fase 4) e v1.7 / 08_Fase5_Kickoff.md
+      # v1.1 (Fase 5, 06/09/2026)
       #
       # clawPDF_setup.vdproj (Visual Studio Installer Projects) segue excluído
       # do build principal (decisão da Fase 1) — não builda com MSBuild puro e
@@ -178,17 +103,19 @@ jobs:
       # pro WiX Toolset v5 (SDK-style .wixproj, restaurado via NuGet/dotnet,
       # sem precisar instalar nada manualmente no runner).
       #
-      # A partir da Fase 5: o MSI empacota Release|AnyCPU (não mais Debug, decisão
-      # revisada) e é assinado com Authenticode self-signed gerado no próprio CI —
-      # decisão explícita de manter a fase dentro de infraestrutura de CI, sem
-      # custo/procurement de certificado real. Trade-off aceito: o MSI vai disparar
-      # avisos do Windows Defender/SmartScreen no destino (cadeia de confiança não
-      # reconhecida) — esperado, não é bug do pipeline.
+      # O MSI empacota Release|AnyCPU, sem símbolos de debug, com as custom actions
+      # de driver de impressora portadas (ver Product.wxs), e é assinado com
+      # Authenticode self-signed gerado no próprio CI — decisão explícita de manter
+      # a fase dentro de infraestrutura de CI, sem custo/procurement de certificado
+      # real. Trade-off aceito: o MSI vai disparar avisos do Windows Defender/
+      # SmartScreen no destino (cadeia de confiança não reconhecida) — esperado,
+      # não é bug do pipeline.
       # ---------------------------------------------------------------------
       - name: Build MSI (WiX)
         run: >
           dotnet build src\clawPDF_setup_wix\clawPDF_setup_wix.wixproj
           -c Release
+          ${{ env.MSI_PRODUCT_VERSION_ARG }}
 
       - name: Gerar certificado self-signed para Authenticode
         shell: pwsh
@@ -248,3 +175,131 @@ jobs:
           name: clawPDF-msi
           path: src\clawPDF_setup_wix\bin\Release\clawPDF_CI.msi
           if-no-files-found: error
+
+      # ---------------------------------------------------------------------
+      # Fase 5 — instalar o MSI de verdade no runner
+      # Decisão: Handoff_SunTzu.md v1.7 (portar custom actions de driver, item 4)
+      #
+      # msiexec roda silencioso (/qn), com log próprio pra debug caso falhe. As
+      # custom actions AddPrinterDriver (Product.wxs) rodam aqui dentro, deferred,
+      # como parte da sequência normal do MSI — se a instalação do driver falhar,
+      # msiexec retorna código de erro e este step falha também (Return="check"
+      # na custom action garante isso).
+      # ---------------------------------------------------------------------
+      - name: Instalar MSI
+        shell: pwsh
+        run: |
+          $msiPath = (Resolve-Path "src\clawPDF_setup_wix\bin\Release\clawPDF_CI.msi").Path
+          $logPath = "msi_install.log"
+
+          Write-Host "Instalando $msiPath"
+          $proc = Start-Process msiexec.exe -ArgumentList "/i `"$msiPath`" /qn /norestart /l*v `"$logPath`"" -Wait -PassThru
+
+          if ($proc.ExitCode -ne 0) {
+            Write-Error "FAIL: msiexec retornou exit code $($proc.ExitCode)"
+            Get-Content $logPath -Tail 100
+            exit 1
+          }
+
+          Write-Host "PASS: MSI instalado (exit code 0)"
+
+      - name: Upload MSI install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msi-install-log
+          path: msi_install.log
+          if-no-files-found: ignore
+
+      # ---------------------------------------------------------------------
+      # Fase 5 do roteiro CLAWPDF — smoke test endurecido
+      # Decisão de escopo e critério: Handoff_SunTzu.md v1.7 (endurecimento do
+      # smoke test, desbloqueado pelas custom actions de driver portadas acima)
+      #
+      # Critério da Fase 3 (exit {0,1} ou "vivo = PASS") existia porque a impressora
+      # clawPDF nunca estava instalada no runner, então o app sempre caía no fluxo
+      # de reparo com diálogo modal travado. Agora que o MSI instala o driver de
+      # verdade (step anterior), esse fluxo de reparo não deveria mais disparar —
+      # CheckInstallation()/EnsurePrinterIsInstalled() em App.xaml.cs deve encontrar
+      # a impressora já instalada e seguir o caminho normal.
+      #
+      # Critério novo:
+      #   PASS: processo sai sozinho com exit code 0 puro, dentro do timeout.
+      #   FAIL: timeout (processo travado — indicaria que o driver não ficou
+      #         instalado do jeito que o app espera), exit code != 0 (inclusive
+      #         o antigo "1 aceitável" da Fase 3 — não é mais aceitável aqui,
+      #         porque não há mais motivo legítimo pro app recusar rodar).
+      # ---------------------------------------------------------------------
+      - name: Smoke test — clawPDF.exe pós-instalação real (exit 0 puro)
+        shell: pwsh
+        run: |
+          $exePath = "C:\Program Files\clawPDF\clawPDF.exe"
+
+          if (-not (Test-Path $exePath)) {
+            Write-Error "FAIL: clawPDF.exe não encontrado em $exePath — instalação não colocou o binário onde esperado"
+            exit 1
+          }
+
+          $stdoutFile = "smoke_stdout.log"
+          $stderrFile = "smoke_stderr.log"
+          $timeoutSeconds = 15
+
+          Write-Host "Iniciando $exePath (timeout: ${timeoutSeconds}s)"
+
+          $process = Start-Process -FilePath $exePath `
+            -RedirectStandardOutput $stdoutFile `
+            -RedirectStandardError $stderrFile `
+            -PassThru
+
+          $exited = $process.WaitForExit($timeoutSeconds * 1000)
+
+          if (-not $exited) {
+            Write-Error "FAIL: processo ainda rodando após ${timeoutSeconds}s — com a impressora instalada de verdade, isso indica travamento inesperado, não o fluxo de reparo antigo"
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            Get-Content $stdoutFile -Raw -ErrorAction SilentlyContinue | Write-Host
+            Get-Content $stderrFile -Raw -ErrorAction SilentlyContinue | Write-Host
+            exit 1
+          }
+
+          $exitCode = $process.ExitCode
+          Write-Host "Processo saiu sozinho com exit code $exitCode"
+
+          if ($exitCode -eq 0) {
+            Write-Host "PASS: exit code 0 puro — impressora instalada de verdade, app rodou o caminho normal"
+          } else {
+            Write-Error "FAIL: exit code $exitCode — esperado 0 puro agora que a impressora está instalada"
+            Get-Content $stdoutFile -Raw -ErrorAction SilentlyContinue | Write-Host
+            Get-Content $stderrFile -Raw -ErrorAction SilentlyContinue | Write-Host
+            exit 1
+          }
+
+      - name: Upload smoke test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-logs
+          path: |
+            smoke_stdout.log
+            smoke_stderr.log
+          if-no-files-found: ignore
+
+      # ---------------------------------------------------------------------
+      # Fase 5 — criação da GitHub Release (só em push de tag semver)
+      # Decisão: Handoff_SunTzu.md v1.7 (trigger de release)
+      #
+      # gh CLI já vem instalado no runner windows-latest. GITHUB_TOKEN automático
+      # (via permissions: contents: write no topo do arquivo) é suficiente, sem
+      # secret adicional. Roda só quando o push que disparou o workflow foi uma
+      # tag v* — push normal em master/dev não cria release, só builda/testa/
+      # publica o MSI como artifact de CI (como já fazia antes da Fase 5).
+      # ---------------------------------------------------------------------
+      - name: Criar GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            "src\clawPDF_setup_wix\bin\Release\clawPDF_CI.msi" `
+            --title "clawPDF ${{ github.ref_name }}" `
+            --generate-notes
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
