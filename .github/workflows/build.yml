@@ -256,7 +256,13 @@ jobs:
           $exePath = "C:\Program Files\clawPDF\clawPDF.exe"
 
           if (-not (Test-Path $exePath)) {
-            Write-Error "FAIL: clawPDF.exe não encontrado em $exePath — instalação não colocou o binário onde esperado"
+            Write-Host "clawPDF.exe nao esta em $exePath. Procurando onde a instalacao colocou de fato (diagnostico):"
+            foreach ($root in @("C:\Program Files", "C:\Program Files (x86)")) {
+              $found = Get-ChildItem -Path $root -Recurse -Filter "clawPDF.exe" -ErrorAction SilentlyContinue -Depth 2 | Select-Object -First 1
+              if ($found) { Write-Host "  encontrado em: $($found.FullName)" }
+              else { Write-Host "  nada em $root" }
+            }
+            Write-Error "FAIL: clawPDF.exe não encontrado em $exePath — instalação não colocou o binário onde esperado (ver diagnostico acima)"
             exit 1
           }
 

@@ -43,7 +43,15 @@
 
     <MediaTemplate EmbedCab="yes" />
 
-    <StandardDirectory Id="ProgramFilesFolder">
+    <!--
+      ProgramFiles64Folder, não ProgramFilesFolder — achado do run real (07/09/2026):
+      no WiX, ProgramFilesFolder é SEMPRE a pasta de 32 bits ("Program Files (x86)"
+      num Windows 64-bit), independente do Platform do pacote. A pasta de 64 bits
+      tem ID próprio: ProgramFiles64Folder. Declarar Platform=x64 no .wixproj muda a
+      bitness dos componentes mas NÃO remapeia esse ID — por isso o MSI continuava
+      instalando em Program Files (x86) mesmo depois da correção de Platform.
+    -->
+    <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="clawPDF">
         <Component Id="ApplicationShortcutComponent" Guid="678ADCDD-6E77-4869-B785-19A417F239AB">
           <Shortcut Id="ApplicationStartMenuShortcut"
