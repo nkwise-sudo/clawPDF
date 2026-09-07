@@ -103,8 +103,8 @@
                   Return="ignore" />
 
     <InstallExecuteSequence>
-      <Custom Action="AddPrinterDriver" After="InstallFiles">NOT Installed</Custom>
-      <Custom Action="RemovePrinterDriver" Before="RemoveFiles">Installed AND (REMOVE="ALL")</Custom>
+      <Custom Action="AddPrinterDriver" After="InstallFiles" Condition="NOT Installed" />
+      <Custom Action="RemovePrinterDriver" Before="RemoveFiles" Condition='Installed AND (REMOVE="ALL")' />
     </InstallExecuteSequence>
 
     <Feature Id="MainApplication" Title="clawPDF" Level="1">
