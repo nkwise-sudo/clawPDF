@@ -6,6 +6,15 @@
     <OutputType>Package</OutputType>
 
     <!--
+      Fase 5 — achado do run real (06/09/2026): sem isso, o WiX assume Platform
+      x86 por padrão, o que faz o pacote instalar em "Program Files (x86)\clawPDF"
+      em vez de "Program Files\clawPDF" — quebrou o smoke test, que esperava o
+      caminho de 64 bits. windows-latest é x64 e os binários são AnyCPU (rodam
+      nativamente em x64), então declarar x64 aqui é o correto.
+    -->
+    <Platform>x64</Platform>
+
+    <!--
       Fase 5 — decisão (Handoff_SunTzu.md v1.7 / 08_Fase5_Kickoff.md v1.1): o MSI
       empacota a saída Release|AnyCPU. Symbols de debug (.pdb) excluídos no
       harvesting em Product.wxs, não aqui.
